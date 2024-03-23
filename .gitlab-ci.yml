@@ -1,0 +1,37 @@
+variables:
+    REGISTRY: registry.gitlab.com/monkeybranch/lucy-enterprise-front
+stages:
+    - build
+    - deploy
+
+build_image:
+    stage: build
+    image: docker:20.10.16
+    services: 
+        - docker:20.10.16-dind
+    variables:
+        DOCKER_TLS_CERTDIR: "/certs"
+    before_script:
+        - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    script:
+        - touch .env
+        - echo "VITE_URL_API_BACKEND=$LUCY_ENTERPRISE_API_BASE_URI" > .env
+        - docker build -t $REGISTRY .
+        - docker push $REGISTRY
+    only:
+        - main
+
+deploy:
+    stage: deploy
+    before_script:
+        - chmod 400 $MONKEY_DROPLETS_SSH_KEY
+    script:
+        - ssh -o StrictHostKeyChecking=no -i $MONKEY_DROPLETS_SSH_KEY root@$MONKEY_DROPLETS_IP "
+            docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY &&
+            (docker network create $DOCKER_DEFAULT_NETWORK 2> /dev/null || true) &&
+            (docker ps -aq --filter ancestor=$REGISTRY | xargs docker stop | xargs docker rm) 2> /dev/null || true &&
+            (docker images -q -f=reference="$REGISTRY" | xargs docker rmi) 2> /dev/null || true &&
+            docker pull $REGISTRY &&
+            docker compose -f lucy-enterprise-front.yaml up -d"
+    only:
+        - main
